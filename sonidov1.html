@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ejecutor Musical con Cámara — Proto V1</title>
+  <style>
+    :root { --bg:#0b0b10; --fg:#e8e8f0; --muted:#9aa0a6; --accent:#7dd3fc; --ok:#34d399; --warn:#fbbf24; --err:#f87171; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif; background: radial-gradient(1200px 600px at 70% 10%, #0f1622, #0b0b10); color: var(--fg); }
+    header { padding: 16px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid #1f2937; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0)); position: sticky; top:0; backdrop-filter: blur(6px); }
+    header h1 { margin:0; font-size: 18px; letter-spacing: .3px; font-weight: 650; }
+    header .pill { padding: 6px 10px; border-radius: 999px; font-size: 12px; background:#111827; color:var(--muted); border:1px solid #1f2937; }
+    main { display:grid; grid-template-columns: 1.2fr .8fr; gap:18px; padding:18px; }
+    #stage { position: relative; border:1px solid #1f2937; border-radius: 14px; overflow:hidden; background:#0b1220; aspect-ratio: 16/9; }
+    video { position:absolute; inset:0; width:100%; height:100%; object-fit: cover; transform: scaleX(-1); opacity:.92; }
+    canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+    #hud { position:absolute; bottom:10px; left:10px; display:flex; gap:8px; flex-wrap:wrap; }
+    .tag { background:#0b1220; border:1px solid #1f2937; padding:6px 10px; border-radius:10px; font-size:12px; color:var(--muted); }
+    .tag strong { color:var(--fg); }
+    #side { border:1px solid #1f2937; border-radius: 14px; padding:16px; background:#0b1220; }
+    #side h2 { margin-top:0; font-size:16px; }
+    .ctrl { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px 0; }
+    .ctrl label { font-size:13px; color:var(--muted); }
+    input[type=range] { width: 180px; }
+    button { appearance:none; background:#111827; border:1px solid #1f2937; color:var(--fg); padding:10px 12px; border-radius:10px; cursor:pointer; }
+    button:hover { border-color:#374151; }
+    .note { color: var(--accent); font-weight:600; }
+    .tip { font-size:12px; color:var(--muted); line-height:1.35; }
+    footer { padding: 10px 18px 20px; color: var(--muted); font-size:12px; }
+    .legend { display:grid; grid-template-columns: 1fr; gap:8px; margin-top:8px; }
+    .bubble { background:#0b1220; border:1px solid #1f2937; border-radius:10px; padding:10px; }
+    .ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ejecutor Musical con Cámara — Proto V1</h1>
+    <span class="pill">Modo manos → notas / filtro / volumen</span>
+  </header>
+  <main>
+    <section id="stage">
+      <video id="video" playsinline></video>
+      <canvas id="overlay"></canvas>
+      <div id="hud">
+        <div class="tag">Estado: <strong id="status">Inicializando…</strong></div>
+        <div class="tag">Latencia audio: <strong id="latency">–</strong> ms</div>
+        <div class="tag">Nota actual: <strong id="note" class="note">–</strong></div>
+        <div class="tag">Velocidad: <strong id="vel">–</strong></div>
+      </div>
+    </section>
+    <aside id="side">
+      <h2>Controles</h2>
+      <div class="ctrl"><label>Activar Audio</label><button id="btnAudio">🔊 Iniciar</button></div>
+      <div class="ctrl"><label>Escala musical</label>
+        <select id="scale">
+          <option value="major">Mayor</option>
+          <option value="minor">Menor</option>
+          <option value="pentatonic">Pentatónica</option>
+          <option value="chromatic">Cromática</option>
+        </select>
+      </div>
+      <div class="ctrl"><label>Octava base</label><input id="octave" type="range" min="2" max="6" step="1" value="4"></div>
+      <div class="ctrl"><label>Sensibilidad (pinch)</label><input id="pinch" type="range" min="0.02" max="0.15" step="0.005" value="0.06"></div>
+      <div class="ctrl"><label>Release (s)</label><input id="release" type="range" min="0.05" max="1.2" step="0.05" value="0.4"></div>
+      <div class="legend">
+        <div class="bubble tip">
+          <strong>Gestos</strong><br/>
+          • <em>Pinch</em> (pulgar–índice) de la mano derecha: <span class="ok">toca/para</span> la nota.<br/>
+          • Altura mano derecha (Y): <span class="ok">pitch</span> dentro de la escala.<br/>
+          • Distancia mano izquierda a cámara: <span class="ok">volumen</span>.<br/>
+          • Mano derecha (X): <span class="ok">filtro</span> barrido.
+        </div>
+        <div class="bubble tip">
+          Permisos: usa Chrome/Edge en HTTPS o local. Da permiso a la cámara y haz click en “Iniciar” para habilitar audio (política del navegador).
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer>
+    Hecho con <a href="https://tonejs.github.io/" target="_blank" rel="noreferrer">Tone.js</a> y <a href="https://developers.google.com/mediapipe" target="_blank" rel="noreferrer">MediaPipe Hands</a> · Prototipo educativo.
+  </footer>
+
+  <!-- Tone.js (síntesis en el navegador) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js" integrity="sha512-Lxod8tV1c5z+f+4k0u0gGY7mY25ZthqZ9v+O7PJGchh5m9r9D5x3t5eQ8cca0x8QK7Z4m2W6Rj+T1HqlsKPGAg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+  <!-- MediaPipe Hands + utilidades de cámara -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const $ = (id)=>document.getElementById(id);
+
+    // ---------- Audio: Sintetizador ----------
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: 800, rolloff: -24, Q: 1 }).toDestination();
+    const reverb = new Tone.Reverb({ decay: 1.8, wet: 0.15 }).connect(filter);
+    const synth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.01, decay: 0.1, sustain: 0.6, release: 0.4 }
+    }).connect(reverb);
+
+    let currentNote = null;
+    let lastTrig = 0;
+
+    const scales = {
+      major: [0,2,4,5,7,9,11,12],
+      minor: [0,2,3,5,7,8,10,12],
+      pentatonic: [0,2,4,7,9,12],
+      chromatic: [0,1,2,3,4,5,6,7,8,9,10,11,12],
+    };
+
+    function yToScaleIndex(yNorm, scaleArr){
+      // yNorm: 0 (arriba) -> 1 (abajo). Invertimos para que arriba sea agudo.
+      const idx = Math.floor((1 - yNorm) * (scaleArr.length));
+      return Math.max(0, Math.min(scaleArr.length-1, idx));
+    }
+
+    function xToFilter(xNorm){
+      // xNorm: 0 izquierda -> 1 derecha
+      return 200 + xNorm * 4000; // 200Hz a 4.2kHz
+    }
+
+    function zToVolume(zNorm){
+      // zNorm: distancia relativa de mano a cámara (negativo hacia la cámara en MediaPipe)
+      // Mapeo simple: más cerca (más negativo) -> más volumen.
+      const t = Math.max(0, Math.min(1, (0.2 - zNorm) / 0.4)); // z ~ [-0.2, 0.2]
+      return Tone.gainToDb(0.2 + 0.8 * t); // -14dB a 0dB aprox
+    }
+
+    function midiToNoteName(m){
+      const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const n = names[m % 12];
+      const o = Math.floor(m/12) - 1;
+      return `${n}${o}`;
+    }
+
+    // ---------- UI ----------
+    function setStatus(txt){ $('status').textContent = txt; }
+    function setNote(txt){ $('note').textContent = txt; }
+    function setVel(v){ $('vel').textContent = v; }
+    function setLatency(){
+      const look = Tone.getContext().lookAhead || 0.1;
+      $('latency').textContent = Math.round(look * 1000);
+    }
+    setLatency();
+
+    // ---------- Init cámara y manos ----------
+    let camera = null;
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+    hands.onResults(onResults);
+
+    async function setupCamera(){
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 }, audio:false });
+      video.srcObject = stream;
+      await video.play();
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      const Camera = window.Camera;
+      camera = new Camera(video, {
+        onFrame: async () => { await hands.send({ image: video }); },
+        width: video.videoWidth,
+        height: video.videoHeight
+      });
+      camera.start();
+      setStatus('Cámara lista');
+    }
+
+    // ---------- Lógica musical con gestos ----------
+    function pinchStrength(landmarks){
+      // Distancia euclidiana normalizada entre punta índice (8) y pulgar (4)
+      const a = landmarks[8], b = landmarks[4];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d = Math.hypot(dx, dy);
+      return d; // menor = más "pinch"
+    }
+
+    function averageZ(landmarks){
+      let sum = 0;
+      for(const p of landmarks) sum += p.z;
+      return sum / landmarks.length;
+    }
+
+    function onResults(results){
+      ctx.clearRect(0,0,overlay.width, overlay.height);
+      // Dibujo manos
+      if(results.multiHandLandmarks && results.multiHandLandmarks.length){
+        for(const lm of results.multiHandLandmarks){
+          drawConnectors(ctx, lm, HAND_CONNECTIONS, {color: '#7dd3fc55', lineWidth: 3});
+          drawLandmarks(ctx, lm, {color: '#7dd3fc', lineWidth: 1, radius: 2});
+        }
+      }
+
+      const now = performance.now();
+      const scaleName = $('scale').value;
+      const scaleArr = scales[scaleName];
+      const octave = parseInt($('octave').value, 10);
+      const rel = parseFloat($('release').value);
+      const pinchThr = parseFloat($('pinch').value);
+
+      let right = null, left = null;
+      if(results.multiHandedness && results.multiHandLandmarks){
+        for(let i=0;i<results.multiHandedness.length;i++){
+          const label = results.multiHandedness[i].label; // 'Left' or 'Right' (de la persona, ojo espejo)
+          const lm = results.multiHandLandmarks[i];
+          if(label === 'Right') right = lm;
+          else if(label === 'Left') left = lm;
+        }
+      }
+
+      // Mano derecha controla nota y filtro con pinch para disparo
+      if(right){
+        const y = right[9].y; // punto medio de la palma aprox
+        const x = right[9].x;
+        const idx = yToScaleIndex(y, scaleArr);
+        const semitone = scaleArr[idx];
+        const midi = 12 * (octave + 1) + semitone; // C-1 = 0
+        const noteName = midiToNoteName(midi);
+        const pinch = pinchStrength(right);
+        filter.frequency.rampTo(xToFilter(x), 0.05);
+
+        // Disparo por pinch (cuando baja de umbral)
+        const isPinching = pinch < pinchThr;
+        if(isPinching && now - lastTrig > 120){
+          // Velocity basada en apertura antes del pinch (heurístico): usamos velocidad media fija + leve random
+          const vel = 0.7 + Math.random()*0.25;
+          synth.triggerAttack(noteName, undefined, vel);
+          currentNote = noteName;
+          setNote(noteName);
+          setVel(vel.toFixed(2));
+          lastTrig = now;
+        } else if(!isPinching && currentNote){
+          synth.triggerRelease(currentNote, undefined);
+          currentNote = null;
+        }
+      } else {
+        // sin mano derecha liberamos nota si estaba sonando
+        if(currentNote){
+          synth.triggerRelease(currentNote);
+          currentNote = null;
+          setNote('–');
+        }
+      }
+
+      // Mano izquierda controla volumen (aproximado por Z promedio)
+      if(left){
+        const z = averageZ(left);
+        const db = zToVolume(z);
+        filter.set({ gain: 0 }); // no-op, pero dejamos por claridad
+        Tone.Destination.volume.rampTo(db, 0.05);
+      }
+    }
+
+    // ---------- Botón de audio ----------
+    $('btnAudio').addEventListener('click', async ()=>{
+      await Tone.start();
+      // sincronizar release del envolvente
+      synth.set({ envelope: { release: parseFloat($('release').value) }});
+      setStatus('Audio activo ✔');
+      $('btnAudio').textContent = '✅ Audio listo';
+      $('btnAudio').disabled = true;
+    });
+
+    $('release').addEventListener('input', (e)=>{
+      const v = parseFloat(e.target.value);
+      synth.set({ envelope: { release: v }});
+    });
+
+    // Iniciar
+    (async ()=>{
+      try {
+        await setupCamera();
+      } catch(err){
+        setStatus('Error cámara: ' + err.message);
+        console.error(err);
+      }
+    })();
+  </script>
+</body>
+</html>
